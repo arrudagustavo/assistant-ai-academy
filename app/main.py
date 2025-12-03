@@ -142,7 +142,7 @@ class ChatMessage(BaseModel):
 @app.post("/chat")
 async def chat_endpoint(chat_req: ChatMessage):
     try:
-        results = collection.query(query_texts=[chat_req.message], n_results=5)
+        results = collection.query(query_texts=[chat_req.message], n_results=20)
         retrieved_texts = results['documents'][0]
         
         # Se não achou nada, tenta responder com lei zero
