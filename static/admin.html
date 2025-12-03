@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Base de Conhecimento</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        @keyframes pulse-purple {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .6;
+            }
+        }
+
+        .animate-pulse-bar {
+            animation: pulse-purple 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+
+    <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-lg">
+        <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">Base de Conhecimento</h2>
+
+        <form id="upload-form" class="space-y-6 mb-8 border-b pb-8 border-gray-100">
+            <div class="flex items-center justify-center w-full">
+                <label for="dropzone-file"
+                    class="flex flex-col items-center justify-center w-full h-48 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors relative overflow-hidden">
+
+                    <div id="empty-state"
+                        class="flex flex-col items-center justify-center pt-5 pb-6 transition-all duration-300">
+                        <svg class="w-8 h-8 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12">
+                            </path>
+                        </svg>
+                        <p class="mb-2 text-sm text-gray-500"><span class="font-semibold">Clique para enviar</span></p>
+                        <p class="text-xs text-gray-400 text-center px-4">PDF, DOCX, PPTX, MD, TXT</p>
+                    </div>
+
+                    <div id="file-selected-state" class="hidden flex-col items-center justify-center pt-5 pb-6">
+                        <p class="mb-2 text-sm text-gray-800 font-semibold text-center px-4 break-all"
+                            id="filename-display">arquivo.pdf</p>
+                        <p class="text-xs text-green-600 font-medium">Pronto</p>
+                    </div>
+
+                    <input id="dropzone-file" type="file" class="hidden" accept=".pdf,.md,.txt,.docx,.pptx" />
+                </label>
+            </div>
+
+            <div id="progress-area" class="hidden">
+                <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                    <div id="progress-bar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
+                        style="width: 0%"></div>
+                </div>
+                <p id="progress-text" class="text-xs text-center text-indigo-600 font-semibold animate-pulse">
+                    Iniciando...</p>
+            </div>
+
+            <div id="status" class="text-center text-sm font-medium hidden"></div>
+
+            <button type="submit" id="submit-btn" disabled
+                class="w-full text-white bg-gray-400 cursor-not-allowed font-medium rounded-lg text-sm px-5 py-2.5 text-center transition-colors">
+                Adicionar Arquivo
+            </button>
+        </form>
+
+        <div>
+            <h3 class="text-lg font-semibold text-gray-700 mb-3 flex items-center justify-between">
+                Manuais Ativos
+                <button onclick="loadDocuments()"
+                    class="text-xs text-indigo-600 hover:text-indigo-800">Atualizar</button>
+            </h3>
+            <div id="docs-list" class="space-y-2 max-h-60 overflow-y-auto">
+                <p class="text-sm text-gray-400 text-center py-4">Carregando...</p>
+            </div>
+        </div>
+
+        <div class="mt-6 text-center border-t pt-4 border-gray-100">
+            <a href="/" class="text-indigo-600 hover:underline text-sm font-medium">Voltar para o Chat</a>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('upload-form');
+        const fileInput = document.getElementById('dropzone-file');
+        const statusDiv = document.getElementById('status');
+        const emptyState = document.getElementById('empty-state');
+        const fileSelectedState = document.getElementById('file-selected-state');
+        const filenameDisplay = document.getElementById('filename-display');
+        const submitBtn = document.getElementById('submit-btn');
+        const progressArea = document.getElementById('progress-area');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+
+        fileInput.addEventListener('change', function (e) {
+            if (this.files && this.files.length > 0) {
+                const file = this.files[0];
+                filenameDisplay.textContent = file.name;
+                emptyState.classList.add('hidden');
+                fileSelectedState.classList.remove('hidden');
+                fileSelectedState.classList.add('flex');
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
+                submitBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                resetProgress();
+            }
+        });
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            const files = fileInput.files;
+            if (files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append('file', files[0]);
+
+            submitBtn.disabled = true;
+            submitBtn.classList.add('cursor-not-allowed', 'opacity-50');
+            progressArea.classList.remove('hidden');
+            statusDiv.classList.add('hidden');
+
+            const xhr = new XMLHttpRequest();
+            xhr.upload.onprogress = function (event) {
+                if (event.lengthComputable) {
+                    const percent = (event.loaded / event.total) * 100;
+                    progressBar.style.width = percent + '%';
+                    if (percent < 100) {
+                        progressText.textContent = `Enviando... ${Math.round(percent)}%`;
+                    } else {
+                        progressText.textContent = 'Processando vetores...';
+                        progressBar.classList.add('bg-purple-600', 'animate-pulse-bar');
+                    }
+                }
+            };
+
+            xhr.onload = function () {
+                if (xhr.status === 200) {
+                    progressBar.style.width = '100%';
+                    progressBar.classList.replace('bg-purple-600', 'bg-green-500');
+                    progressBar.classList.remove('animate-pulse-bar');
+                    progressText.textContent = 'Concluído!';
+                    showStatus('Arquivo processado com sucesso!', 'text-green-600 mb-4');
+                    loadDocuments();
+                    setTimeout(() => {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Adicionar Outro';
+                        submitBtn.classList.remove('cursor-not-allowed', 'opacity-50');
+                    }, 1000);
+                } else {
+                    handleError();
+                }
+            };
+            xhr.onerror = handleError;
+            xhr.open('POST', '/upload', true);
+            xhr.send(formData);
+
+            function handleError() {
+                progressBar.classList.add('bg-red-500');
+                progressText.textContent = 'Erro';
+                showStatus('Erro ao processar arquivo.', 'text-red-500 mb-4');
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('cursor-not-allowed', 'opacity-50');
+            }
+        });
+
+        function resetProgress() {
+            progressBar.style.width = '0%';
+            progressBar.classList.remove('bg-green-500', 'bg-red-500', 'bg-purple-600', 'animate-pulse-bar');
+            progressBar.classList.add('bg-indigo-600');
+            progressArea.classList.add('hidden');
+            progressText.textContent = '';
+            statusDiv.classList.add('hidden');
+        }
+
+        function showStatus(msg, classes) {
+            statusDiv.textContent = msg;
+            statusDiv.className = `text-center text-sm font-medium my-3 ${classes}`;
+            statusDiv.classList.remove('hidden');
+        }
+
+        // --- ATUALIZADO: CARREGAR COM CONTAGEM ---
+        const docsList = document.getElementById('docs-list');
+
+        async function loadDocuments() {
+            try {
+                const res = await fetch('/documents');
+                const data = await res.json();
+
+                docsList.innerHTML = '';
+
+                if (!data.documents || data.documents.length === 0) {
+                    docsList.innerHTML = '<p class="text-sm text-gray-400 text-center py-2">Nenhum manual cadastrado.</p>';
+                    return;
+                }
+
+                // Agora 'doc' é um objeto {name: "x.pdf", count: 10}
+                data.documents.forEach(doc => {
+                    const item = document.createElement('div');
+                    item.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100 hover:border-indigo-100 transition-colors';
+                    item.innerHTML = `
+                        <div class="flex items-center space-x-3 overflow-hidden">
+                            <svg class="w-5 h-5 text-indigo-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            <div class="flex flex-col truncate">
+                                <span class="text-sm text-gray-700 font-medium truncate" title="${doc.name}">${doc.name}</span>
+                                <span class="text-xs text-gray-400">${doc.count} vetores</span>
+                            </div>
+                        </div>
+                        <button onclick="deleteDocument('${doc.name}')" class="text-red-400 hover:text-red-600 p-1 hover:bg-red-50 rounded transition-colors" title="Excluir">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    `;
+                    docsList.appendChild(item);
+                });
+            } catch (error) {
+                console.error('Erro ao listar:', error);
+                docsList.innerHTML = '<p class="text-sm text-red-400 text-center">Erro ao carregar lista.</p>';
+            }
+        }
+
+        async function deleteDocument(filename) {
+            if (!confirm(`Tem certeza que deseja apagar todos os ${filename}?`)) return;
+
+            try {
+                const res = await fetch(`/documents/${filename}`, { method: 'DELETE' });
+                if (res.ok) {
+                    loadDocuments();
+                } else {
+                    alert('Erro ao deletar arquivo.');
+                }
+            } catch (error) {
+                alert('Erro de conexão.');
+            }
+        }
+
+        loadDocuments();
+    </script>
+</body>
+
+</html>
