@@ -142,7 +142,7 @@ class ChatMessage(BaseModel):
 @app.post("/chat")
 async def chat_endpoint(chat_req: ChatMessage):
     try:
-        results = collection.query(query_texts=[chat_req.message], n_results=55)
+        results = collection.query(query_texts=[chat_req.message], n_results=20)
         retrieved_texts = results['documents'][0]
         
         # Se não achou nada, tenta responder com lei zero
@@ -160,11 +160,13 @@ async def chat_endpoint(chat_req: ChatMessage):
         system_instruction = """
         Você é um assistente de suporte especializado em funcionalidades da plataforma de e-commerce da CWS.
         
+        IMPORTANTE: Os manuais podem conter transcrições de reuniões com linguagem informal.
+        SUA TAREFA: Ignore a "conversa fiada", extraia apenas a informação técnica e responda de forma profissional.
+
         DIRETRIZES:
-        1. BASE: Responda usando o contexto abaixo.
-        2. SÍNTESE: Se o usuário pedir um conceito (Ex: "O que é Cuponeria?") e o texto tiver apenas instruções de uso, você PODE explicar o conceito com base nas funcionalidades descritas.
-        3. HONESTIDADE: Se o contexto não tiver NADA a ver com a pergunta, diga: "Puxa, parece que não encontrei detalhes suficientes sobre isso na documentação."
-        4. ESTILO: Profissional, amigável e direto.
+        1. SÍNTESE: Se o texto for confuso, organize a explicação do conceito técnico.
+        2. CONTEXTO: Use apenas as informações abaixo.
+        3. FALLBACK: Se não houver informação técnica, use a mensagem padrão de não encontrado.
         """
 
         model = genai.GenerativeModel('gemini-2.0-flash')
