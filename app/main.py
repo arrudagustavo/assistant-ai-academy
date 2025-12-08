@@ -1,6 +1,8 @@
 import os
 import io
 import time
+import unicodedata
+import re
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -38,18 +40,23 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# --- 2. FUNÇÕES DO MANIFESTO (LISTA MESTRA) ---
-# Usamos um vetor especial com ID 'manifesto_arquivos' para guardar a lista de nomes
+# --- FUNÇÃO FAXINEIRA (NOVA) ---
+def clean_filename(text):
+    """Remove acentos e caracteres especiais para criar IDs compatíveis com Pinecone"""
+    # Normaliza unicode (ex: ã -> a, ç -> c)
+    nfkd_form = unicodedata.normalize('NFKD', text)
+    only_ascii = nfkd_form.encode('ASCII', 'ignore').decode('ASCII')
+    # Remove qualquer coisa que não seja letra, número, ponto ou underscore
+    clean_text = re.sub(r'[^a-zA-Z0-9_.]', '', only_ascii)
+    return clean_text
 
+
+# --- 2. FUNÇÕES DO MANIFESTO ---
 def get_manifest():
-    """Recupera a lista de arquivos salvos"""
     try:
-        # Busca o vetor especial
         result = index.fetch(ids=["manifesto_arquivos"])
         if result and "manifesto_arquivos" in result.vectors:
             metadata = result.vectors["manifesto_arquivos"].metadata
-            # O Pinecone guarda listas como strings separadas se não for nativo, 
-            # mas vamos usar o campo 'file_list' como string separada por ; para garantir
             files_str = metadata.get("file_list", "")
             if files_str:
                 return files_str.split(";")
@@ -58,7 +65,6 @@ def get_manifest():
         return []
 
 def update_manifest(filename, action="add"):
-    """Atualiza a lista mestra (Adiciona ou Remove)"""
     current_files = get_manifest()
     
     if action == "add":
@@ -68,11 +74,9 @@ def update_manifest(filename, action="add"):
         if filename in current_files:
             current_files.remove(filename)
     
-    # Cria um vetor "bobo" de zeros só para segurar o metadado (768 dimensões)
     dummy_vector = [0.0] * 768
     files_str = ";".join(current_files)
     
-    # Salva no Pinecone
     index.upsert(vectors=[{
         "id": "manifesto_arquivos",
         "values": dummy_vector,
@@ -124,18 +128,15 @@ async def read_admin(): return FileResponse('static/admin.html')
 
 @app.get("/documents")
 async def list_documents():
-    """Retorna a lista de nomes do manifesto"""
     files = get_manifest()
-    # Formata para o frontend
     doc_list = [{"name": f} for f in files]
     return {"documents": doc_list}
 
 @app.delete("/documents/{filename}")
 async def delete_document(filename: str):
     try:
-        # 1. Deleta os vetores de conteúdo
+        # Deleta usando o filtro de metadados (que aceita acentos)
         index.delete(filter={"source": filename})
-        # 2. Remove do manifesto
         update_manifest(filename, "remove")
         return {"status": "success", "message": f"{filename} removido."}
     except Exception as e:
@@ -147,10 +148,13 @@ async def upload_file(file: UploadFile = File(...)):
     contents = await file.read()
     ext = filename.lower()
     
+    # Gera uma versão "limpa" do nome apenas para o ID técnico
+    # Ex: "Transcrição.pdf" vira "Transcricao.pdf"
+    safe_id_name = clean_filename(filename)
+
     text = extract_text(contents, ext)
     if not text.strip(): raise HTTPException(status_code=400, detail="Arquivo vazio.")
 
-    # Remove anterior
     try: index.delete(filter={"source": filename})
     except: pass
 
@@ -161,8 +165,13 @@ async def upload_file(file: UploadFile = File(...)):
     for i, chunk in enumerate(chunks):
         try:
             vector = get_embedding(chunk)
+            
+            # AQUI ESTÁ A CORREÇÃO: Usamos o nome limpo no ID
+            chunk_id = f"{safe_id_name}_{i}"
+            
+            # Mas mantemos o filename original (com acento) nos metadados
             vectors_to_upsert.append({
-                "id": f"{filename}_{i}", 
+                "id": chunk_id, 
                 "values": vector, 
                 "metadata": {"source": filename, "text": chunk}
             })
@@ -172,7 +181,6 @@ async def upload_file(file: UploadFile = File(...)):
     for i in range(0, len(vectors_to_upsert), batch_size):
         index.upsert(vectors=vectors_to_upsert[i:i+batch_size])
     
-    # ATUALIZA O MANIFESTO
     update_manifest(filename, "add")
         
     return {"status": "Sucesso", "filename": filename, "chunks": len(chunks)}
@@ -183,7 +191,6 @@ class ChatMessage(BaseModel): message: str
 async def chat_endpoint(chat_req: ChatMessage):
     try:
         q_embedding = get_embedding(chat_req.message)
-        # Filtra para não pegar o vetor do manifesto na busca
         search_results = index.query(
             vector=q_embedding, top_k=20, include_metadata=True,
             filter={"source": {"$exists": True}} 
@@ -194,9 +201,18 @@ async def chat_endpoint(chat_req: ChatMessage):
 
         context = "\n\n".join(retrieved)
         
-        sys_inst = """Você é um assistente técnico da CWS.
-        Ignore linguagem informal, foque no conteúdo técnico.
-        Se não souber, diga que não encontrou."""
+        sys_inst = """
+        Você é um assistente de suporte especializado em funcionalidades da plataforma de e-commerce da CWS.
+        
+        IMPORTANTE: Os manuais podem conter transcrições de reuniões com linguagem informal.
+        SUA TAREFA: Ignore a "conversa fiada", extraia apenas a informação técnica e responda de forma profissional.
+
+        DIRETRIZES:
+        1. BASE NO CONTEXTO: Use as informações técnicas do contexto para formular suas respostas.
+        2. SÍNTESE PERMITIDA: Se o usuário perguntar um conceito e o contexto tiver instruções de uso, explique o conceito baseando-se nas funcionalidades.
+        3. SEM ALUCINAÇÃO: Não invente funcionalidades.
+        4. LEI ZERO (Fallback): Se a informação for insuficiente, use a mensagem padrão: "Puxa, parece que não encontrei detalhes suficientes sobre essa funcionalidade na documentação que estou consultando. Recomendo entrar em contato com o suporte da CWS para obter informações mais detalhadas!"
+        """
         
         model = genai.GenerativeModel('gemini-2.0-flash')
         final_prompt = f"{sys_inst}\n\nCONTEXTO:\n{context}\n\nPERGUNTA:\n{chat_req.message}"
