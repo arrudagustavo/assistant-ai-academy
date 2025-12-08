@@ -4,8 +4,8 @@ python-multipart
 google-generativeai
 python-dotenv
 pypdf2
-chromadb
 langchain-text-splitters
 python-docx
 python-pptx
 markdown
+pinecone-client
