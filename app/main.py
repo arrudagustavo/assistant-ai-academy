@@ -3,6 +3,7 @@ import io
 import time
 import unicodedata
 import re
+from collections import Counter
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -26,14 +27,15 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 
 if not GOOGLE_API_KEY or not PINECONE_API_KEY:
-    raise ValueError("ERRO: Chaves de API não encontradas.")
+    raise ValueError("ERRO: Chaves de API não encontradas no .env")
 
 genai.configure(api_key=GOOGLE_API_KEY)
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "academy-ia"
 
+# Checagem inicial
 if index_name not in pc.list_indexes().names():
-    raise ValueError(f"Index '{index_name}' não encontrado.")
+    raise ValueError(f"O Index '{index_name}' não foi encontrado no Pinecone. Verifique o nome.")
 index = pc.Index(index_name)
 
 app = FastAPI()
@@ -42,7 +44,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- FUNÇÃO FAXINEIRA (ASCII ID) ---
 def clean_filename(text):
-    """Remove acentos e caracteres especiais para criar IDs compatíveis"""
+    """Remove acentos e caracteres especiais para criar IDs compatíveis com Pinecone"""
     nfkd_form = unicodedata.normalize('NFKD', text)
     only_ascii = nfkd_form.encode('ASCII', 'ignore').decode('ASCII')
     clean_text = re.sub(r'[^a-zA-Z0-9_.]', '', only_ascii)
@@ -72,9 +74,8 @@ def update_manifest(filename, action="add"):
         if filename in current_files:
             current_files.remove(filename)
     
-    # CORREÇÃO AQUI: O Pinecone não aceita zeros. Usamos 0.01.
+    # Vetor dummy não-zero para não dar erro
     dummy_vector = [0.01] * 768
-    
     files_str = ";".join(current_files)
     
     index.upsert(vectors=[{
@@ -115,7 +116,8 @@ def extract_text(contents, ext):
         elif ext.endswith('.md') or ext.endswith('.txt'):
             text = contents.decode("utf-8")
         return text
-    except:
+    except Exception as e:
+        print(f"Erro na extração de texto: {e}")
         return ""
 
 # --- 4. ROTAS ---
@@ -147,11 +149,11 @@ async def upload_file(file: UploadFile = File(...)):
     contents = await file.read()
     ext = filename.lower()
     
-    # ID Limpo para o Pinecone (sem acentos)
     safe_id_name = clean_filename(filename)
-
     text = extract_text(contents, ext)
-    if not text.strip(): raise HTTPException(status_code=400, detail="Arquivo vazio.")
+    
+    if not text.strip(): 
+        raise HTTPException(status_code=400, detail="Arquivo vazio.")
 
     # Remove anterior
     try: index.delete(filter={"source": filename})
@@ -161,10 +163,11 @@ async def upload_file(file: UploadFile = File(...)):
     chunks = splitter.split_text(text)
 
     vectors_to_upsert = []
+    print(f"--- Iniciando Upload: {filename} ({len(chunks)} chunks) ---")
+    
     for i, chunk in enumerate(chunks):
         try:
             vector = get_embedding(chunk)
-            # ID limpo, Metadata original
             chunk_id = f"{safe_id_name}_{i}"
             
             vectors_to_upsert.append({
@@ -172,13 +175,16 @@ async def upload_file(file: UploadFile = File(...)):
                 "values": vector, 
                 "metadata": {"source": filename, "text": chunk}
             })
-        except: continue
+        except Exception as e:
+            print(f"Erro vetorizando chunk {i}: {e}")
+            continue
 
     batch_size = 100
     for i in range(0, len(vectors_to_upsert), batch_size):
         index.upsert(vectors=vectors_to_upsert[i:i+batch_size])
     
     update_manifest(filename, "add")
+    print("--- Upload Concluído ---")
         
     return {"status": "Sucesso", "filename": filename, "chunks": len(chunks)}
 
@@ -186,38 +192,55 @@ class ChatMessage(BaseModel): message: str
 
 @app.post("/chat")
 async def chat_endpoint(chat_req: ChatMessage):
-    try:
-        q_embedding = get_embedding(chat_req.message)
-        
-        # Filtra para não trazer o manifesto na resposta
-        search_results = index.query(
-            vector=q_embedding, top_k=20, include_metadata=True,
-            filter={"source": {"$exists": True}} 
-        )
+    # --- MODO DEBUG SEM PROTEÇÃO (O SERVIDOR VAI PARAR SE DER ERRO) ---
+    print("\n" + "="*30)
+    print(f"DEBUG: Recebi pergunta: '{chat_req.message}'")
+    
+    # 1. Embedding
+    print("DEBUG: Gerando embedding da pergunta...")
+    q_embedding = get_embedding(chat_req.message)
+    print(f"DEBUG: Embedding gerado. Tamanho: {len(q_embedding)} (Deve ser 768)")
+    
+    # 2. Busca
+    print("DEBUG: Consultando Pinecone...")
+    search_results = index.query(
+        vector=q_embedding,
+        top_k=20,
+        include_metadata=True,
+        filter={"source": {"$exists": True}} 
+    )
+    print(f"DEBUG: Pinecone retornou {len(search_results['matches'])} resultados.")
 
-        retrieved = [m['metadata']['text'] for m in search_results['matches'] if 'text' in m['metadata']]
-        if not retrieved: return {"response": "Não encontrei informações nos manuais."}
+    # 3. Contexto
+    retrieved = [m['metadata']['text'] for m in search_results['matches'] if 'text' in m['metadata']]
+    
+    if not retrieved:
+        print("DEBUG: Nenhum texto encontrado nos metadados.")
+        return {"response": "Não encontrei informações nos manuais."}
 
-        context = "\n\n".join(retrieved)
-        
-        sys_inst = """
-        Você é um assistente de suporte especializado em funcionalidades da plataforma de e-commerce da CWS.
-        
-        IMPORTANTE: Os manuais podem conter transcrições de reuniões com linguagem informal.
-        SUA TAREFA: Ignorar a "conversa fiada", extraia apenas a informação técnica e responda de forma profissional.
+    context = "\n\n".join(retrieved)
+    print(f"DEBUG: Contexto montado com {len(context)} caracteres.")
+    
+    # 4. Prompt
+    sys_inst = """
+    Você é um assistente de suporte especializado em funcionalidades da plataforma de e-commerce da CWS.
+    
+    IMPORTANTE: Os manuais podem conter transcrições de reuniões com linguagem informal.
+    SUA TAREFA: Ignorar a "conversa fiada", extraia apenas a informação técnica e responda de forma profissional.
 
-        DIRETRIZES:
-        1. BASE NO CONTEXTO: Use as informações técnicas do contexto para formular suas respostas.
-        2. SÍNTESE PERMITIDA: Se o usuário perguntar um conceito e o contexto tiver instruções de uso, explique o conceito baseando-se nas funcionalidades.
-        3. SEM ALUCINAÇÃO: Não invente funcionalidades.
-        4. LEI ZERO (Fallback): Se a informação for insuficiente, use a mensagem padrão: "Puxa, parece que não encontrei detalhes suficientes sobre essa funcionalidade na documentação que estou consultando. Recomendo entrar em contato com o suporte da CWS para obter informações mais detalhadas!"
-        """
-        
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        final_prompt = f"{sys_inst}\n\nCONTEXTO:\n{context}\n\nPERGUNTA:\n{chat_req.message}"
-        
-        response = model.generate_content(final_prompt)
-        return {"response": response.text}
-
-    except Exception as e:
-        return {"response": "Erro técnico."}
+    DIRETRIZES:
+    1. BASE NO CONTEXTO: Use as informações técnicas do contexto para formular suas respostas.
+    2. SÍNTESE PERMITIDA: Se o usuário perguntar um conceito e o contexto tiver instruções de uso, explique o conceito baseando-se nas funcionalidades.
+    3. SEM ALUCINAÇÃO: Não invente funcionalidades.
+    4. LEI ZERO (Fallback): Se a informação for insuficiente, use a mensagem padrão: "Puxa, parece que não encontrei detalhes suficientes sobre essa funcionalidade na documentação que estou consultando. Recomendo entrar em contato com o suporte da CWS para obter informações mais detalhadas!"
+    """
+    
+    model = genai.GenerativeModel('gemini-flash-latest')
+    final_prompt = f"{sys_inst}\n\nCONTEXTO:\n{context}\n\nPERGUNTA:\n{chat_req.message}"
+    
+    print("DEBUG: Enviando para o Gemini...")
+    response = model.generate_content(final_prompt)
+    print("DEBUG: Resposta recebida!")
+    print("="*30 + "\n")
+    
+    return {"response": response.text}
