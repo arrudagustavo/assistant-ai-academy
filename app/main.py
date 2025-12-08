@@ -40,13 +40,11 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# --- FUNÇÃO FAXINEIRA (NOVA) ---
+# --- FUNÇÃO FAXINEIRA (ASCII ID) ---
 def clean_filename(text):
-    """Remove acentos e caracteres especiais para criar IDs compatíveis com Pinecone"""
-    # Normaliza unicode (ex: ã -> a, ç -> c)
+    """Remove acentos e caracteres especiais para criar IDs compatíveis"""
     nfkd_form = unicodedata.normalize('NFKD', text)
     only_ascii = nfkd_form.encode('ASCII', 'ignore').decode('ASCII')
-    # Remove qualquer coisa que não seja letra, número, ponto ou underscore
     clean_text = re.sub(r'[^a-zA-Z0-9_.]', '', only_ascii)
     return clean_text
 
@@ -74,7 +72,9 @@ def update_manifest(filename, action="add"):
         if filename in current_files:
             current_files.remove(filename)
     
-    dummy_vector = [0.0] * 768
+    # CORREÇÃO AQUI: O Pinecone não aceita zeros. Usamos 0.01.
+    dummy_vector = [0.01] * 768
+    
     files_str = ";".join(current_files)
     
     index.upsert(vectors=[{
@@ -135,7 +135,6 @@ async def list_documents():
 @app.delete("/documents/{filename}")
 async def delete_document(filename: str):
     try:
-        # Deleta usando o filtro de metadados (que aceita acentos)
         index.delete(filter={"source": filename})
         update_manifest(filename, "remove")
         return {"status": "success", "message": f"{filename} removido."}
@@ -148,13 +147,13 @@ async def upload_file(file: UploadFile = File(...)):
     contents = await file.read()
     ext = filename.lower()
     
-    # Gera uma versão "limpa" do nome apenas para o ID técnico
-    # Ex: "Transcrição.pdf" vira "Transcricao.pdf"
+    # ID Limpo para o Pinecone (sem acentos)
     safe_id_name = clean_filename(filename)
 
     text = extract_text(contents, ext)
     if not text.strip(): raise HTTPException(status_code=400, detail="Arquivo vazio.")
 
+    # Remove anterior
     try: index.delete(filter={"source": filename})
     except: pass
 
@@ -165,11 +164,9 @@ async def upload_file(file: UploadFile = File(...)):
     for i, chunk in enumerate(chunks):
         try:
             vector = get_embedding(chunk)
-            
-            # AQUI ESTÁ A CORREÇÃO: Usamos o nome limpo no ID
+            # ID limpo, Metadata original
             chunk_id = f"{safe_id_name}_{i}"
             
-            # Mas mantemos o filename original (com acento) nos metadados
             vectors_to_upsert.append({
                 "id": chunk_id, 
                 "values": vector, 
@@ -191,6 +188,8 @@ class ChatMessage(BaseModel): message: str
 async def chat_endpoint(chat_req: ChatMessage):
     try:
         q_embedding = get_embedding(chat_req.message)
+        
+        # Filtra para não trazer o manifesto na resposta
         search_results = index.query(
             vector=q_embedding, top_k=20, include_metadata=True,
             filter={"source": {"$exists": True}} 
@@ -205,7 +204,7 @@ async def chat_endpoint(chat_req: ChatMessage):
         Você é um assistente de suporte especializado em funcionalidades da plataforma de e-commerce da CWS.
         
         IMPORTANTE: Os manuais podem conter transcrições de reuniões com linguagem informal.
-        SUA TAREFA: Ignore a "conversa fiada", extraia apenas a informação técnica e responda de forma profissional.
+        SUA TAREFA: Ignorar a "conversa fiada", extraia apenas a informação técnica e responda de forma profissional.
 
         DIRETRIZES:
         1. BASE NO CONTEXTO: Use as informações técnicas do contexto para formular suas respostas.
