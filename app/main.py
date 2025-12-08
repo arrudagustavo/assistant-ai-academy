@@ -8,13 +8,13 @@ from pydantic import BaseModel
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-# Processamento de Arquivos
+# Processamento
 import PyPDF2
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import docx
 from pptx import Presentation
 
-# Banco de Dados Vetorial (Nuvem)
+# Banco Nuvem
 from pinecone import Pinecone
 
 # --- 1. CONFIGURAÇÃO ---
@@ -23,54 +23,84 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 
-if not GOOGLE_API_KEY:
-    raise ValueError("ERRO: GOOGLE_API_KEY não encontrada.")
-if not PINECONE_API_KEY:
-    raise ValueError("ERRO: PINECONE_API_KEY não encontrada.")
+if not GOOGLE_API_KEY or not PINECONE_API_KEY:
+    raise ValueError("ERRO: Chaves de API não encontradas.")
 
-# Configura Google Gemini
 genai.configure(api_key=GOOGLE_API_KEY)
-
-# Configura Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "academy-ia" # O nome exato que você criou no painel do Pinecone
+index_name = "academy-ia"
 
-# Verifica conexão com o índice
 if index_name not in pc.list_indexes().names():
-    raise ValueError(f"O Index '{index_name}' não foi encontrado no Pinecone.")
+    raise ValueError(f"Index '{index_name}' não encontrado.")
 index = pc.Index(index_name)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# --- 2. FUNÇÕES AUXILIARES ---
+# --- 2. FUNÇÕES DO MANIFESTO (LISTA MESTRA) ---
+# Usamos um vetor especial com ID 'manifesto_arquivos' para guardar a lista de nomes
+
+def get_manifest():
+    """Recupera a lista de arquivos salvos"""
+    try:
+        # Busca o vetor especial
+        result = index.fetch(ids=["manifesto_arquivos"])
+        if result and "manifesto_arquivos" in result.vectors:
+            metadata = result.vectors["manifesto_arquivos"].metadata
+            # O Pinecone guarda listas como strings separadas se não for nativo, 
+            # mas vamos usar o campo 'file_list' como string separada por ; para garantir
+            files_str = metadata.get("file_list", "")
+            if files_str:
+                return files_str.split(";")
+        return []
+    except:
+        return []
+
+def update_manifest(filename, action="add"):
+    """Atualiza a lista mestra (Adiciona ou Remove)"""
+    current_files = get_manifest()
+    
+    if action == "add":
+        if filename not in current_files:
+            current_files.append(filename)
+    elif action == "remove":
+        if filename in current_files:
+            current_files.remove(filename)
+    
+    # Cria um vetor "bobo" de zeros só para segurar o metadado (768 dimensões)
+    dummy_vector = [0.0] * 768
+    files_str = ";".join(current_files)
+    
+    # Salva no Pinecone
+    index.upsert(vectors=[{
+        "id": "manifesto_arquivos",
+        "values": dummy_vector,
+        "metadata": {"file_list": files_str, "type": "manifest"}
+    }])
+
+
+# --- 3. FUNÇÕES AUXILIARES ---
 
 def get_embedding(text):
-    """Gera o vetor numérico (768 dimensões) usando o Google"""
-    # O modelo 'text-embedding-004' é otimizado para RAG
-    result = genai.embed_content(
+    return genai.embed_content(
         model="models/text-embedding-004",
         content=text,
         task_type="retrieval_document"
-    )
-    return result['embedding']
+    )['embedding']
 
 def extract_text(contents, ext):
-    """Extrai texto de PDF, DOCX, PPTX, MD, TXT"""
     text = ""
     try:
         if ext.endswith('.pdf'):
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(contents))
-            for page in pdf_reader.pages:
-                text += page.extract_text() or ""
+            for page in pdf_reader.pages: text += page.extract_text() or ""
         elif ext.endswith('.docx'):
             doc = docx.Document(io.BytesIO(contents))
             text = "\n".join([p.text for p in doc.paragraphs])
             for table in doc.tables:
                 for row in table.rows:
-                    for cell in row.cells:
-                        text.append(cell.text)
+                    for cell in row.cells: text.append(cell.text)
         elif ext.endswith('.pptx'):
             prs = Presentation(io.BytesIO(contents))
             full_text = []
@@ -81,42 +111,33 @@ def extract_text(contents, ext):
         elif ext.endswith('.md') or ext.endswith('.txt'):
             text = contents.decode("utf-8")
         return text
-    except Exception as e:
-        print(f"Erro extração: {e}")
+    except:
         return ""
 
-# --- 3. ROTAS ---
+# --- 4. ROTAS ---
 
 @app.get("/")
-async def read_root():
-    return FileResponse('static/index.html')
+async def read_root(): return FileResponse('static/index.html')
 
 @app.get("/admin")
-async def read_admin():
-    return FileResponse('static/admin.html')
+async def read_admin(): return FileResponse('static/admin.html')
 
 @app.get("/documents")
 async def list_documents():
-    """
-    Lista estatísticas do Pinecone.
-    Nota: O Pinecone não permite listar nomes de arquivos facilmente como o banco local.
-    Mostraremos o total de vetores ativos na nuvem.
-    """
-    try:
-        stats = index.describe_index_stats()
-        count = stats['total_vector_count']
-        # Retorna um item genérico representando a base na nuvem
-        return {"documents": [{"name": "Base de Conhecimento (Nuvem Pinecone)", "count": count}]}
-    except Exception as e:
-        return {"error": str(e)}
+    """Retorna a lista de nomes do manifesto"""
+    files = get_manifest()
+    # Formata para o frontend
+    doc_list = [{"name": f} for f in files]
+    return {"documents": doc_list}
 
 @app.delete("/documents/{filename}")
 async def delete_document(filename: str):
-    """Deleta vetores pelo metadata 'source'"""
     try:
-        # Deleta todos os vetores que vieram desse arquivo
+        # 1. Deleta os vetores de conteúdo
         index.delete(filter={"source": filename})
-        return {"status": "success", "message": f"Memória de {filename} apagada."}
+        # 2. Remove do manifesto
+        update_manifest(filename, "remove")
+        return {"status": "success", "message": f"{filename} removido."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -126,109 +147,62 @@ async def upload_file(file: UploadFile = File(...)):
     contents = await file.read()
     ext = filename.lower()
     
-    # 1. Extração
     text = extract_text(contents, ext)
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="Arquivo vazio ou ilegível.")
+    if not text.strip(): raise HTTPException(status_code=400, detail="Arquivo vazio.")
 
-    # 2. Limpeza prévia (Evita duplicidade na nuvem)
-    try:
-        index.delete(filter={"source": filename})
-    except:
-        pass 
+    # Remove anterior
+    try: index.delete(filter={"source": filename})
+    except: pass
 
-    # 3. Chunking (Picotar o texto)
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = splitter.split_text(text)
 
-    # 4. Vetorização e Upload (Upsert)
     vectors_to_upsert = []
-    
     for i, chunk in enumerate(chunks):
         try:
             vector = get_embedding(chunk)
-            chunk_id = f"{filename}_{i}"
-            # Prepara pacote para o Pinecone: ID, Vetor e Metadados (Texto original + Nome arquivo)
             vectors_to_upsert.append({
-                "id": chunk_id, 
+                "id": f"{filename}_{i}", 
                 "values": vector, 
                 "metadata": {"source": filename, "text": chunk}
             })
-        except Exception as e:
-            print(f"Erro vetorizar chunk {i}: {e}")
-            continue
+        except: continue
 
-    # Envia em lotes de 100 para não sobrecarregar a rede
     batch_size = 100
     for i in range(0, len(vectors_to_upsert), batch_size):
-        batch = vectors_to_upsert[i:i+batch_size]
-        index.upsert(vectors=batch)
+        index.upsert(vectors=vectors_to_upsert[i:i+batch_size])
+    
+    # ATUALIZA O MANIFESTO
+    update_manifest(filename, "add")
         
-    return {"status": "Sucesso", "filename": filename, "chunks_created": len(chunks)}
+    return {"status": "Sucesso", "filename": filename, "chunks": len(chunks)}
 
-class ChatMessage(BaseModel):
-    message: str
+class ChatMessage(BaseModel): message: str
 
 @app.post("/chat")
 async def chat_endpoint(chat_req: ChatMessage):
     try:
-        # 1. Transforma a pergunta do usuário em números (Vetor)
-        question_embedding = get_embedding(chat_req.message)
-
-        # 2. Busca no Pinecone (20 resultados mais relevantes)
+        q_embedding = get_embedding(chat_req.message)
+        # Filtra para não pegar o vetor do manifesto na busca
         search_results = index.query(
-            vector=question_embedding,
-            top_k=20,
-            include_metadata=True
+            vector=q_embedding, top_k=20, include_metadata=True,
+            filter={"source": {"$exists": True}} 
         )
 
-        # 3. Extrai o texto dos resultados
-        retrieved_texts = []
-        for match in search_results['matches']:
-            if 'metadata' in match and 'text' in match['metadata']:
-                retrieved_texts.append(match['metadata']['text'])
+        retrieved = [m['metadata']['text'] for m in search_results['matches'] if 'text' in m['metadata']]
+        if not retrieved: return {"response": "Não encontrei informações nos manuais."}
+
+        context = "\n\n".join(retrieved)
         
-        # Se não achou nada relevante
-        if not retrieved_texts:
-            return {"response": "Puxa, parece que não encontrei detalhes suficientes sobre essa funcionalidade na documentação que estou consultando. Recomendo entrar em contato com o suporte da CWS para obter informações mais detalhadas!"}
-
-        context = "\n\n".join(retrieved_texts)
-
-        # 4. Prompt do Sistema (Suas Regras de Ouro)
-        system_instruction = """
-        Você é um assistente de suporte especializado em funcionalidades da plataforma de e-commerce da CWS. Seu tom é **profissional, amigável e prestativo**.
-
-        IMPORTANTE: Os manuais podem conter transcrições de reuniões com linguagem informal ("né", "aí", "beleza").
-        SUA TAREFA: Ignorar a conversa fiada, extrair apenas a informação técnica e responder de forma profissional.
-
-        Diretrizes de Aderência e Precisão:
-        1. BASE NO CONTEXTO: Use as informações técnicas do contexto para formular suas respostas.
-        2. SÍNTESE PERMITIDA: Se o usuário perguntar um conceito e o contexto tiver instruções de uso, explique o conceito baseando-se nas funcionalidades.
-        3. SEM ALUCINAÇÃO: Não invente funcionalidades.
-        4. LEI ZERO (Fallback): Se a informação for insuficiente, use a mensagem padrão: "Puxa, parece que não encontrei detalhes suficientes sobre essa funcionalidade na documentação que estou consultando. Recomendo entrar em contato com o suporte da CWS para obter informações mais detalhadas!"
-
-        Estilo e Estrutura:
-        5. TOM: Use um tom amigável. Comece com uma saudação e termine com cortesia.
-        6. LINGUAGEM: Simples e direta.
-        7. CAMINHOS: Use Menu > Submenu > Opção se houver essa informação.
-        """
-
+        sys_inst = """Você é um assistente técnico da CWS.
+        Ignore linguagem informal, foque no conteúdo técnico.
+        Se não souber, diga que não encontrou."""
+        
         model = genai.GenerativeModel('gemini-2.0-flash')
-        
-        final_prompt = f"""
-        {system_instruction}
-
-        --- INÍCIO DO CONTEXTO RAG (DOCUMENTAÇÃO OFICIAL) ---
-        {context}
-        --- FIM DO CONTEXTO RAG ---
-
-        PERGUNTA DO CLIENTE:
-        {chat_req.message}
-        """
+        final_prompt = f"{sys_inst}\n\nCONTEXTO:\n{context}\n\nPERGUNTA:\n{chat_req.message}"
         
         response = model.generate_content(final_prompt)
         return {"response": response.text}
 
     except Exception as e:
-        print(f"Erro chat: {e}")
-        return {"response": "Desculpe, estou enfrentando uma instabilidade técnica momentânea. Poderia tentar novamente em alguns instantes?"}
+        return {"response": "Erro técnico."}
