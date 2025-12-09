@@ -4,12 +4,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin - Base de Conhecimento</title>
+    <title>Admin - Gestão CWS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', sans-serif;
+        }
+
+        .bg-brand {
+            background-color: #6b21a8;
+        }
+
+        .text-brand {
+            color: #6b21a8;
+        }
+
+        .hover-bg-brand:hover {
+            background-color: #581c87;
         }
 
         @keyframes pulse-purple {
@@ -32,15 +44,20 @@
 
 <body class="bg-gray-50 min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
 
-    <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-lg">
-        <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão de Documentos</h2>
+    <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-lg border-t-4 border-purple-700">
+
+        <div class="flex flex-col items-center mb-8">
+            <img src="/static/logo-preto-platform.png" alt="Logo" class="h-8 w-auto mb-4">
+            <h2 class="text-xl font-semibold text-gray-800">Gestão de Conhecimento</h2>
+        </div>
 
         <form id="upload-form" class="space-y-6 mb-8 border-b pb-8 border-gray-100">
             <div class="flex items-center justify-center w-full">
                 <label for="dropzone-file"
-                    class="flex flex-col items-center justify-center w-full h-40 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors relative overflow-hidden">
+                    class="flex flex-col items-center justify-center w-full h-40 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors relative overflow-hidden group">
                     <div id="empty-state" class="flex flex-col items-center justify-center pt-5 pb-6">
-                        <svg class="w-8 h-8 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="w-8 h-8 mb-3 text-gray-400 group-hover:text-brand transition-colors" fill="none"
+                            stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12">
                             </path>
@@ -49,7 +66,7 @@
                         <p class="text-xs text-gray-400">PDF, DOCX, PPTX, MD</p>
                     </div>
                     <div id="file-selected-state" class="hidden flex-col items-center justify-center pt-5 pb-6">
-                        <p class="mb-2 text-sm text-gray-800 font-semibold text-center px-4 break-all"
+                        <p class="mb-2 text-sm text-brand font-semibold text-center px-4 break-all"
                             id="filename-display">arquivo.pdf</p>
                     </div>
                     <input id="dropzone-file" type="file" class="hidden" accept=".pdf,.md,.txt,.docx,.pptx" />
@@ -58,37 +75,41 @@
 
             <div id="progress-area" class="hidden">
                 <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
-                    <div id="progress-bar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
+                    <div id="progress-bar" class="bg-brand h-2.5 rounded-full transition-all duration-300"
                         style="width: 0%"></div>
                 </div>
-                <p id="progress-text" class="text-xs text-center text-indigo-600 font-semibold animate-pulse">
-                    Enviando...</p>
+                <p id="progress-text" class="text-xs text-center text-brand font-semibold animate-pulse">Enviando...</p>
             </div>
 
             <button type="submit" id="submit-btn" disabled
-                class="w-full text-white bg-gray-400 cursor-not-allowed font-medium rounded-lg text-sm px-5 py-2.5 text-center transition-colors">
+                class="w-full text-white bg-gray-400 cursor-not-allowed font-medium rounded-lg text-sm px-5 py-3 text-center transition-colors shadow-sm">
                 Salvar na Nuvem
             </button>
         </form>
 
         <div>
-            <h3 class="text-lg font-semibold text-gray-700 mb-3 flex items-center justify-between">
-                Arquivos na Memória
-                <button onclick="loadDocuments()" class="text-xs text-indigo-600 hover:text-indigo-800">↻
+            <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center justify-between">
+                Arquivos Ativos
+                <button onclick="loadDocuments()" class="text-xs text-brand hover:text-purple-900 font-medium">↻
                     Atualizar</button>
             </h3>
-            <div id="docs-list" class="space-y-2 max-h-60 overflow-y-auto">
+            <div id="docs-list" class="space-y-2 max-h-60 overflow-y-auto pr-1">
                 <p class="text-sm text-gray-400 text-center py-4">Carregando...</p>
             </div>
         </div>
 
-        <div class="mt-6 text-center border-t pt-4 border-gray-100">
-            <a href="/" class="text-indigo-600 hover:underline text-sm font-medium">Voltar para o Chat</a>
+        <div class="mt-8 text-center border-t pt-6 border-gray-100">
+            <a href="/" class="text-brand hover:underline text-sm font-medium flex items-center justify-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                </svg>
+                Voltar para o Chat
+            </a>
         </div>
     </div>
 
     <script>
-        // --- UPLOAD LOGIC ---
         const form = document.getElementById('upload-form');
         const fileInput = document.getElementById('dropzone-file');
         const submitBtn = document.getElementById('submit-btn');
@@ -104,7 +125,7 @@
                 document.getElementById('file-selected-state').classList.add('flex');
                 submitBtn.disabled = false;
                 submitBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
-                submitBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                submitBtn.classList.add('bg-brand', 'hover-bg-brand');
             }
         });
 
@@ -112,10 +133,8 @@
             e.preventDefault();
             const files = fileInput.files;
             if (files.length === 0) return;
-
             const formData = new FormData();
             formData.append('file', files[0]);
-
             submitBtn.disabled = true;
             submitBtn.classList.add('cursor-not-allowed');
             progressArea.classList.remove('hidden');
@@ -126,25 +145,19 @@
                     const percent = (event.loaded / event.total) * 100;
                     progressBar.style.width = percent + '%';
                     if (percent >= 100) {
-                        progressText.textContent = 'Processando vetores...';
-                        progressBar.classList.add('animate-pulse-bar', 'bg-purple-600');
+                        progressText.textContent = 'Indexando no Pinecone...';
+                        progressBar.classList.add('animate-pulse-bar', 'bg-purple-500');
                     }
                 }
             };
             xhr.onload = function () {
                 if (xhr.status === 200) {
                     progressBar.style.width = '100%';
-                    progressBar.classList.replace('bg-purple-600', 'bg-green-500');
+                    progressBar.classList.replace('bg-purple-500', 'bg-green-500');
                     progressBar.classList.remove('animate-pulse-bar');
                     progressText.textContent = 'Salvo!';
-                    setTimeout(() => {
-                        resetForm();
-                        loadDocuments(); // Atualiza a lista automaticamente
-                    }, 1000);
-                } else {
-                    alert("Erro ao enviar.");
-                    resetForm();
-                }
+                    setTimeout(() => { resetForm(); loadDocuments(); }, 1000);
+                } else { alert("Erro ao enviar."); resetForm(); }
             };
             xhr.open('POST', '/upload', true);
             xhr.send(formData);
@@ -154,53 +167,41 @@
             submitBtn.disabled = false;
             submitBtn.classList.remove('cursor-not-allowed');
             progressArea.classList.add('hidden');
-            progressBar.classList.remove('bg-green-500', 'bg-purple-600');
-            progressBar.classList.add('bg-indigo-600');
+            progressBar.classList.remove('bg-green-500', 'bg-purple-500');
+            progressBar.classList.add('bg-brand');
             progressBar.style.width = '0%';
         }
 
-        // --- LISTAGEM LOGIC ---
         const docsList = document.getElementById('docs-list');
-
         async function loadDocuments() {
             try {
                 const res = await fetch('/documents');
                 const data = await res.json();
                 docsList.innerHTML = '';
-
                 if (!data.documents || data.documents.length === 0) {
                     docsList.innerHTML = '<p class="text-sm text-gray-400 text-center py-2">Nenhum arquivo na memória.</p>';
                     return;
                 }
-
                 data.documents.forEach(doc => {
                     const item = document.createElement('div');
-                    item.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100 hover:border-indigo-100 transition-colors';
+                    item.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100 hover:border-purple-200 transition-colors group';
                     item.innerHTML = `
                         <div class="flex items-center space-x-3 overflow-hidden">
-                            <svg class="w-5 h-5 text-indigo-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            <svg class="w-5 h-5 text-gray-400 group-hover:text-brand flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                             <span class="text-sm text-gray-700 font-medium truncate" title="${doc.name}">${doc.name}</span>
                         </div>
-                        <button onclick="deleteDocument('${doc.name}')" class="text-red-400 hover:text-red-600 p-1 hover:bg-red-50 rounded transition-colors" title="Excluir">
+                        <button onclick="deleteDocument('${doc.name}')" class="text-red-300 hover:text-red-500 p-1 hover:bg-red-50 rounded transition-colors" title="Excluir">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                         </button>
                     `;
                     docsList.appendChild(item);
                 });
-            } catch (error) {
-                docsList.innerHTML = '<p class="text-sm text-red-400 text-center">Erro ao carregar lista.</p>';
-            }
+            } catch (error) { docsList.innerHTML = '<p class="text-sm text-red-400 text-center">Erro ao carregar lista.</p>'; }
         }
-
         async function deleteDocument(filename) {
             if (!confirm(`Apagar memória de "${filename}"?`)) return;
-            try {
-                const res = await fetch(`/documents/${filename}`, { method: 'DELETE' });
-                if (res.ok) loadDocuments();
-                else alert('Erro ao deletar.');
-            } catch (error) { alert('Erro de conexão.'); }
+            try { const res = await fetch(`/documents/${filename}`, { method: 'DELETE' }); if (res.ok) loadDocuments(); else alert('Erro.'); } catch (e) { alert('Erro de conexão.'); }
         }
-
         loadDocuments();
     </script>
 </body>
