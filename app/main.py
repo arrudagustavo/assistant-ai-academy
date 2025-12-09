@@ -268,7 +268,7 @@ async def chat_endpoint(chat_req: ChatMessage):
     
         5. TOM DE CONVERSA (Friendly):
            - Evite "Não encontrei na documentação".
-           - Prefira: "Olhei nos manuais e o que encontrei sobre isso foi X e Y..." ou "Baseado no que tenho aqui, o processo é..."
+           - Prefira: "Baseado no que tenho aqui, o processo é..."
            - Seja direto, mas educado.
     
         6. PRIVACIDADE:
