@@ -14,12 +14,10 @@
             font-family: 'Inter', sans-serif;
         }
 
-        /* Cor Personalizada (Roxo Profundo) */
         .bg-brand {
             background-color: #6b21a8;
         }
 
-        /* Roxo 800 */
         .text-brand {
             color: #6b21a8;
         }
@@ -57,7 +55,7 @@
             }
         }
 
-        /* Markdown Styles */
+        /* --- ESTILOS RESPONSIVOS PARA MARKDOWN --- */
         .markdown-content h1,
         .markdown-content h2,
         .markdown-content h3 {
@@ -88,24 +86,37 @@
             margin-bottom: 0.75rem;
         }
 
+        /* CORREÇÃO DAS TABELAS MOBILE AQUI */
         .markdown-content table {
+            display: block;
+            /* Permite scrolar */
             width: 100%;
+            overflow-x: auto;
+            /* Scroll horizontal automático */
+            -webkit-overflow-scrolling: touch;
+            /* Rolagem suave no iPhone */
             border-collapse: collapse;
             margin-bottom: 1rem;
-            font-size: 0.9em;
+            font-size: 0.85em;
+            /* Fonte um pouco menor na tabela */
         }
 
         .markdown-content th {
             background-color: #f3f4f6;
             font-weight: 600;
             text-align: left;
-            padding: 8px;
+            padding: 8px 12px;
+            /* Mais espaço interno */
             border: 1px solid #e5e7eb;
+            white-space: nowrap;
+            /* Força o título a ficar em uma linha só */
         }
 
         .markdown-content td {
-            padding: 8px;
+            padding: 8px 12px;
             border: 1px solid #e5e7eb;
+            min-width: 120px;
+            /* Garante que a coluna não fique espremida */
         }
 
         .markdown-content a {
@@ -119,6 +130,8 @@
             border-radius: 4px;
             font-family: monospace;
             color: #9333ea;
+            font-size: 0.9em;
+            word-break: break-all;
         }
 
         .markdown-content pre {
@@ -140,7 +153,6 @@
             class="bg-white border-b border-gray-200 p-4 flex justify-between items-center shadow-sm z-10 shrink-0 h-16">
             <div class="flex items-center gap-3">
                 <img src="/static/logo-preto-platform.png" alt="Logo Platform" class="h-8 w-auto object-contain">
-
                 <div class="hidden sm:block h-6 w-px bg-gray-300 mx-2"></div>
                 <p class="hidden sm:block text-gray-500 text-xs font-medium uppercase tracking-wider">Assistant AI</p>
             </div>
@@ -159,7 +171,6 @@
         </div>
 
         <div id="chat-box" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 bg-gray-50 scroll-smooth">
-
             <div class="flex items-start gap-4 max-w-5xl mx-auto pt-4">
                 <div
                     class="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 border border-purple-200">
@@ -170,7 +181,6 @@
                     Olá! Sou o assistente virtual da plataforma. Como posso te ajudar hoje?
                 </div>
             </div>
-
         </div>
 
         <div id="typing-indicator" class="hidden px-8 pb-4 max-w-5xl mx-auto w-full">
