@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import google.generativeai as genai
+from google.api_core import client_options
 from dotenv import load_dotenv
 
 # Processamento de Arquivos
@@ -23,16 +24,26 @@ from pinecone import Pinecone
 load_dotenv()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_BASE = os.getenv("GOOGLE_API_BASE")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 
 if not GOOGLE_API_KEY or not PINECONE_API_KEY:
     raise ValueError("ERRO CRÍTICO: Chaves de API não encontradas no arquivo .env")
 
-genai.configure(api_key=GOOGLE_API_KEY)
+# Configuração do Proxy (se houver)
+if GOOGLE_API_BASE:
+    print(f"--- USANDO PROXY CORPORATIVO: {GOOGLE_API_BASE} ---")
+    genai.configure(
+        api_key=GOOGLE_API_KEY,
+        transport="rest",
+        client_options=client_options.ClientOptions(api_endpoint=GOOGLE_API_BASE)
+    )
+else:
+    print("--- USANDO API PADRÃO DO GOOGLE ---")
+    genai.configure(api_key=GOOGLE_API_KEY)
 
-# MODELO: Usando o 1.5 Flash (Padrão Ouro de Custo/Benefício e Estabilidade)
-# Certifique-se de usar uma API Key criada em um projeto novo para ter acesso total.
-model = genai.GenerativeModel('models/gemini-flash-lite-latest')
+# MODELO (Usando o estável para garantir cota)
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # PINECONE
 pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -42,11 +53,13 @@ if index_name not in pc.list_indexes().names():
     raise ValueError(f"O Index '{index_name}' não foi encontrado no Pinecone.")
 index = pc.Index(index_name)
 
-# GUARDRAIL: NOTA DE CORTE (THRESHOLD)
-# Perguntas com similaridade abaixo disso serão bloqueadas antes de ir para a IA.
-# 0.0 = Aceita tudo (Perigoso) | 1.0 = Tem que ser idêntico (Rígido)
-# 0.40 a 0.50 é o "Sweet Spot" para RAG.
+# GUARDRAIL
 SCORE_THRESHOLD = 0.45 
+
+# --- MEMÓRIA VOLÁTIL (SESSÕES) ---
+# Em produção real, isso iria para um Redis ou Banco de Dados.
+# Aqui, se o servidor reiniciar, a memória limpa.
+chat_sessions = {} 
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -55,14 +68,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # --- FUNÇÕES AUXILIARES ---
 
 def clean_filename(text):
-    """Sanitiza nomes de arquivos para IDs do Pinecone"""
     nfkd_form = unicodedata.normalize('NFKD', text)
     only_ascii = nfkd_form.encode('ASCII', 'ignore').decode('ASCII')
     clean_text = re.sub(r'[^a-zA-Z0-9_.]', '', only_ascii)
     return clean_text
 
 def get_embedding(text):
-    """Gera vetor de 768 dimensões"""
     return genai.embed_content(
         model="models/text-embedding-004",
         content=text,
@@ -70,7 +81,6 @@ def get_embedding(text):
     )['embedding']
 
 def extract_text(contents, ext):
-    """Extrai texto de múltiplos formatos"""
     text = ""
     try:
         if ext.endswith('.pdf'):
@@ -98,18 +108,15 @@ def extract_text(contents, ext):
 
 
 # --- GESTÃO DO MANIFESTO ---
-
 def get_manifest():
     try:
         result = index.fetch(ids=["manifesto_arquivos"])
         if result and "manifesto_arquivos" in result.vectors:
             metadata = result.vectors["manifesto_arquivos"].metadata
             files_str = metadata.get("file_list", "")
-            if files_str:
-                return files_str.split(";")
+            if files_str: return files_str.split(";")
         return []
-    except:
-        return []
+    except: return []
 
 def update_manifest(filename, action="add"):
     current_files = get_manifest()
@@ -154,7 +161,6 @@ async def upload_file(file: UploadFile = File(...)):
     text = extract_text(contents, ext)
     
     if not text.strip(): raise HTTPException(status_code=400, detail="Arquivo vazio.")
-    
     try: index.delete(filter={"source": filename})
     except: pass
 
@@ -180,12 +186,21 @@ async def upload_file(file: UploadFile = File(...)):
     update_manifest(filename, "add")
     return {"status": "Sucesso", "filename": filename}
 
-class ChatMessage(BaseModel): message: str
+# Atualizamos o Modelo de Entrada para receber o ID
+class ChatMessage(BaseModel):
+    message: str
+    session_id: str = "guest" # Padrão para não quebrar testes antigos
 
 @app.post("/chat")
 async def chat_endpoint(chat_req: ChatMessage):
-    # --- PROMPT SYSTEM: A CONSTITUIÇÃO DA IA ---
-    # Aqui estão todas as camadas de segurança cognitiva e regras de negócio
+    # 1. Recupera o Histórico da Sessão
+    session_id = chat_req.session_id
+    if session_id not in chat_sessions:
+        chat_sessions[session_id] = [] # Cria lista vazia se não existir
+    
+    history = chat_sessions[session_id]
+
+    # --- PROMPT SYSTEM ---
     sys_inst = """
     Você é um assistente virtual da CWS, especializado em suporte e-commerce para a plataforma.
     Seu tom deve ser PRESTATIVO, DIDÁTICO e CONVERSACIONAL (como um colega experiente ajudando outro).
@@ -205,9 +220,9 @@ async def chat_endpoint(chat_req: ChatMessage):
     1. DESAMBIGUAÇÃO (Evite confusão):
        - Se a pergunta for genérica (Ex: "Como crio campanha?") e existirem tipos diferentes no contexto (Troca, Cupom, Oferta), NÃO MISTURE.
        - Responda: "Encontrei referências para X e Y. Sobre qual delas você quer saber?"
-	   
-	2. APIS (Evite mencionar se não for perguntado diretamente):
-       - Se a pergunta for genérica (Ex: "Como crio campanha?") e existirem API's e configurações no CDL, opte por sempre responder com o SETUP do CDL, só mencione API se o usuário perguntar diretamente sobre ela.
+
+    2. APIS (Evite confusão):
+       - Se a pergunta for genérica e existirem API's e configurações no CDL, opte por sempre responder com o SETUP do CDL, só mencione API se o usuário perguntar diretamente sobre ela.
 
     3. VISIBILIDADE E HABILITAÇÃO (Se o usuário não achar o menu):
        - Se ensinar um caminho (ex: "Vá em Campanhas > Cupons") e a funcionalidade depender de configuração interna, AVISE:
@@ -236,13 +251,13 @@ async def chat_endpoint(chat_req: ChatMessage):
     """
 
     print("\n" + "="*30)
-    print(f"DEBUG: Recebi pergunta: '{chat_req.message}'")
+    print(f"DEBUG: Sessão: {session_id} | Pergunta: '{chat_req.message}'")
     
     try:
-        # 1. Embedding
+        # 2. Embedding
         q_embedding = get_embedding(chat_req.message)
         
-        # 2. Busca no Pinecone (Limitado a 10 chunks para economizar e ser preciso)
+        # 3. Busca no Pinecone
         search_results = index.query(
             vector=q_embedding,
             top_k=10, 
@@ -250,38 +265,60 @@ async def chat_endpoint(chat_req: ChatMessage):
             filter={"source": {"$exists": True}} 
         )
         
-        # --- GUARDRAIL 1: FILTRO DE RELEVÂNCIA (SCORE THRESHOLD) ---
-        # Impede perguntas "nada a ver" antes mesmo de chamar a IA.
-        
+        # --- GUARDRAIL: FILTRO DE RELEVÂNCIA ---
         best_score = 0
         if search_results['matches']:
             best_score = search_results['matches'][0]['score']
             print(f"DEBUG: Melhor Score de Similaridade: {best_score}")
-        else:
-            print("DEBUG: Nenhum match encontrado no Pinecone.")
 
-        # Se a similaridade for muito baixa, é assunto aleatório ou não documentado.
         if best_score < SCORE_THRESHOLD:
             print(f"DEBUG: BLOQUEIO DE SEGURANÇA. Score ({best_score}) abaixo do limite ({SCORE_THRESHOLD}).")
             return {
                 "response": "Desculpe, minha base de conhecimento é focada estritamente nas documentações da CWS. A sua pergunta parece estar fora desse contexto ou não encontrei informações técnicas suficientes para responder com segurança."
             }
 
-        # 3. Monta o Contexto
+        # 4. Monta o Contexto RAG
         retrieved = [m['metadata']['text'] for m in search_results['matches'] if 'text' in m['metadata']]
-        context = "\n\n".join(retrieved)
+        rag_context = "\n\n".join(retrieved)
         
-        # 4. Prompt Final
-        final_prompt = f"{sys_inst}\n\nCONTEXTO TÉCNICO:\n{context}\n\nPERGUNTA DO USUÁRIO:\n{chat_req.message}"
+        # 5. Formata o Histórico Recente (Últimas 6 mensagens = 3 turnos) para não estourar tokens
+        # Formato de texto simples para o Gemini entender quem falou o que
+        recent_history = history[-6:]
+        history_text = ""
+        for msg in recent_history:
+            role = "USUÁRIO" if msg["role"] == "user" else "ASSISTENTE"
+            history_text += f"{role}: {msg['content']}\n"
+
+        # 6. Prompt Final (Mistura: Regras + Histórico + Contexto RAG + Pergunta Atual)
+        final_prompt = f"""
+{sys_inst}
+
+=========== HISTÓRICO DA CONVERSA (MEMÓRIA) ===========
+(Use isso para entender o contexto de perguntas como "E como faço isso?" ou "E como apago?")
+{history_text}
+
+=========== CONTEXTO TÉCNICO RECUPERADO (RAG) ===========
+{rag_context}
+
+=========== PERGUNTA ATUAL DO USUÁRIO ===========
+{chat_req.message}
+"""
         
-        # 5. Gera Resposta
-        print("DEBUG: Enviando para o Gemini...")
+        # 7. Gera Resposta
+        print("DEBUG: Enviando para o Gemini com Histórico...")
         response = model.generate_content(final_prompt)
         print("DEBUG: Resposta recebida!")
+        
+        # 8. Salva no Histórico
+        # Adiciona pergunta do user
+        chat_sessions[session_id].append({"role": "user", "content": chat_req.message})
+        # Adiciona resposta da IA
+        chat_sessions[session_id].append({"role": "model", "content": response.text})
+        
         print("="*30 + "\n")
         
         return {"response": response.text}
 
     except Exception as e:
         print(f"ERRO CRÍTICO: {e}")
-        return {"response": "Ocorreu uma instabilidade técnica momentânea. Por favor, tente novamente em alguns segundos."}
+        return {"response": f"Ocorreu uma instabilidade técnica momentânea. Detalhe: {str(e)}"}
