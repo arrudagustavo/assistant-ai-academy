@@ -230,6 +230,21 @@
         const userInput = document.getElementById('user-input');
         const typingIndicator = document.getElementById('typing-indicator');
 
+        // --- GERAÇÃO DE ID DE SESSÃO ÚNICO ---
+        function uuidv4() {
+            return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
+                (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+            );
+        }
+
+        // Recupera ID existente ou cria um novo
+        let sessionId = localStorage.getItem('chat_session_id');
+        if (!sessionId) {
+            sessionId = uuidv4();
+            localStorage.setItem('chat_session_id', sessionId);
+        }
+        console.log("Session ID:", sessionId);
+
         const renderer = new marked.Renderer();
         const linkRenderer = renderer.link;
         renderer.link = (href, title, text) => {
@@ -290,7 +305,8 @@
                 const res = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message })
+                    // AGORA ENVIAMOS O SESSION_ID JUNTO
+                    body: JSON.stringify({ message: message, session_id: sessionId })
                 });
                 const data = await res.json();
                 appendMessage('ai', data.response);
