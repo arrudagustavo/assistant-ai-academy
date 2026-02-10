@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# --- BIBLIOTECAS ---
+# --- BIBLIOTECAS (MODERNAS V1) ---
 from google import genai
 from google.genai import types 
 from pinecone import Pinecone
@@ -50,7 +50,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # ==========================================
-# 2. FUNÇÕES TÉCNICAS (EMBEDDING SEGURO)
+# 2. FUNÇÕES TÉCNICAS (EMBEDDING ESTÁVEL 001)
 # ==========================================
 
 def clean_filename(text):
@@ -60,35 +60,27 @@ def clean_filename(text):
 
 def get_embedding(text):
     """
-    Gera vetor de 768 dimensões com SEGURANÇA TOTAL.
+    Gera vetor usando EXCLUSIVAMENTE o modelo gemini-embedding-001.
+    Nativo de 768 dimensões. Sem risco de erro 404.
     """
     try:
-        # Tenta pedir o tamanho certo (768)
+        # Chama direto o modelo que funciona na sua conta
         result = client.models.embed_content(
-            model="models/text-embedding-004",
-            contents=text,
-            config=types.EmbedContentConfig(output_dimensionality=768)
+            model="models/gemini-embedding-001",
+            contents=text
         )
         vector = result.embeddings[0].values
         
-        # GUILHOTINA DE SEGURANÇA: Se vier maior, corta.
+        # GUILHOTINA DE SEGURANÇA (Caso raro de vir maior)
         if len(vector) > 768:
             return vector[:768]
+            
         return vector
 
-    except Exception:
-        # Fallback para modelo antigo
-        try:
-            result = client.models.embed_content(
-                model="models/gemini-embedding-001",
-                contents=text
-            )
-            vec = result.embeddings[0].values
-            if len(vec) > 768: return vec[:768]
-            return vec
-        except Exception as e:
-            print(f"❌ ERRO GRAVE NO EMBEDDING: {e}")
-            return [0.0] * 768
+    except Exception as e:
+        print(f"❌ ERRO NO EMBEDDING: {e}")
+        # Retorna vetor zerado para não travar o servidor
+        return [0.0] * 768
 
 def extract_text(contents, ext):
     text = ""
@@ -230,9 +222,7 @@ async def chat_endpoint(chat_req: ChatMessage):
             role = "USUÁRIO" if msg["role"] == "user" else "ASSISTENTE"
             history_text += f"{role}: {msg['content']}\n"
 
-        # ====================================================
-        # 🔥 AQUI ESTÃO AS SUAS DIRETRIZES ORIGINAIS
-        # ====================================================
+        # 5. DIRETRIZES GOLDEN RULES
         final_prompt = f"""
         Você é um assistente virtual da CWS, especializado em suporte e-commerce para a plataforma.
         Seu tom deve ser PRESTATIVO, DIDÁTICO, CONVERSACIONAL e **OBJETIVO**.
@@ -287,7 +277,6 @@ async def chat_endpoint(chat_req: ChatMessage):
         
         print("🤖 Gerando resposta com Gemini 2.5 Flash...")
         
-        # Usando o 2.5 Flash que funcionou bem
         response = client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=final_prompt
@@ -300,4 +289,4 @@ async def chat_endpoint(chat_req: ChatMessage):
 
     except Exception as e:
         print(f"❌ ERRO CRÍTICO: {e}")
-        return {"response": f"Ocorreu um erro ao processar. Detalhe: {e}"}
+        return {"response": f"Ocorreu um erro técnico: {e}. Tente novamente."}
