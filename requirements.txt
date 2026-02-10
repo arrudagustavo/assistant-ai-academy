@@ -1,11 +1,10 @@
 fastapi
 uvicorn
-python-multipart
-google-generativeai
 python-dotenv
+google-genai
+pinecone-client
 pypdf2
-langchain-text-splitters
 python-docx
 python-pptx
-markdown
-pinecone
+langchain-text-splitters
+python-multipart
