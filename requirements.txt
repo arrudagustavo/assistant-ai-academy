@@ -2,7 +2,7 @@ fastapi
 uvicorn
 python-dotenv
 google-genai
-pinecone-client
+pinecone
 pypdf2
 python-docx
 python-pptx
